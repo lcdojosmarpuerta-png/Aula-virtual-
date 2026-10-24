@@ -1,0 +1,6 @@
+{
+  "name": "Aula Virtual - Curso Introductorio de Excel Básico",
+  "description": "Aula Virtual interactiva para el Curso Introductorio de Excel Básico con desbloqueo secuencial por fases, evaluaciones y certificación oficial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
