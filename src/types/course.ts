@@ -4,6 +4,7 @@ export interface User {
   registeredAt: string;
   hasCompletedOnboarding: boolean;
   role?: 'student' | 'teacher';
+  password?: string;
 }
 
 export type PhaseId = 1 | 2 | 3 | 4 | 5 | 6;
@@ -55,6 +56,7 @@ export interface StudentRecord {
   id: string;
   fullName: string;
   email: string;
+  password?: string;
   registeredAt: string;
   progressPercent: number;
   completedPhases: number[];

@@ -1,7 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { User, StudentRecord, PhaseId } from '../../types/course';
-import { getStoredStudents, saveStoredStudents, saveStoredProgress, getStoredProgress } from '../../utils/storage';
+import {
+  getStoredStudents,
+  saveStoredProgress,
+  getStoredProgress,
+  fetchStudentsFromCloud,
+  createStudentInCloud,
+  updateStudentInCloud,
+  deleteStudentFromCloud,
+  validateUniqueStudentDataInCloud,
+} from '../../utils/storage';
 import { BatchCertificatesModal } from '../certificate/BatchCertificatesModal';
 import {
   Users,
@@ -41,17 +50,34 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [editingStudent, setEditingStudent] = useState<StudentRecord | null>(null);
   const [exportSuccessToast, setExportSuccessToast] = useState<string | null>(null);
 
+  // Load latest students from Supabase on mount
+  useEffect(() => {
+    let active = true;
+    void fetchStudentsFromCloud().then((cloudList) => {
+      if (active) {
+        setStudents(cloudList);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // New Student Form State
   const [newStudentName, setNewStudentName] = useState('');
   const [newStudentEmail, setNewStudentEmail] = useState('');
+  const [newStudentPassword, setNewStudentPassword] = useState('');
+  const [addModalError, setAddModalError] = useState<string | null>(null);
 
   // Edit Student Form State
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
   const [editCompletedPhases, setEditCompletedPhases] = useState<number[]>([]);
   const [editQuizScore, setEditQuizScore] = useState<number>(90);
   const [editPracticalScore, setEditPracticalScore] = useState<number>(90);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
 
   // Calculations
   const totalEnrolled = students.length;
@@ -160,14 +186,29 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     }, 4500);
   };
 
-  const handleCreateStudent = (e: React.FormEvent) => {
+  const handleCreateStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStudentName.trim() || !newStudentEmail.trim()) return;
+    setAddModalError(null);
+    if (!newStudentName.trim() || !newStudentEmail.trim() || !newStudentPassword.trim()) return;
+
+    const uniqueness = await validateUniqueStudentDataInCloud(
+      newStudentName.trim(),
+      newStudentEmail.trim(),
+      newStudentPassword.trim()
+    );
+    if (!uniqueness.valid) {
+      setAddModalError(
+        uniqueness.error ||
+          'No se permiten datos repetidos (correo, nombre o contraseña ya registrados).'
+      );
+      return;
+    }
 
     const newRecord: StudentRecord = {
       id: `std-${Date.now()}`,
       fullName: newStudentName.trim(),
       email: newStudentEmail.trim().toLowerCase(),
+      password: newStudentPassword.trim(),
       registeredAt: new Date().toISOString().split('T')[0],
       progressPercent: 0,
       completedPhases: [],
@@ -182,20 +223,25 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
     const updated = [newRecord, ...students];
     setStudents(updated);
-    saveStoredStudents(updated);
     setNewStudentName('');
     setNewStudentEmail('');
+    setNewStudentPassword('');
+    setAddModalError(null);
     setShowAddModal(false);
+
+    await createStudentInCloud(newRecord);
   };
 
   const openManageStudentModal = (student: StudentRecord) => {
     setEditingStudent(student);
     setEditName(student.fullName);
     setEditEmail(student.email);
+    setEditPassword(student.password || '');
     setEditCompletedPhases([...student.completedPhases]);
     setEditQuizScore(student.quizScore ?? 90);
     setEditPracticalScore(student.practicalScore ?? 92);
     setConfirmDeleteId(null);
+    setEditModalError(null);
   };
 
   const toggleEditPhase = (phaseNum: number) => {
@@ -208,10 +254,30 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     setEditCompletedPhases([1, 2, 3, 4, 5, 6]);
   };
 
-  const handleSaveStudentChanges = (e: React.FormEvent) => {
+  const handleSaveStudentChanges = async (e: React.FormEvent) => {
     e.preventDefault();
+    setEditModalError(null);
     if (!editingStudent || !editName.trim() || !editEmail.trim()) return;
 
+    const finalPasswordToCheck = editPassword.trim()
+      ? editPassword.trim()
+      : editingStudent.password || '';
+
+    const uniqueness = await validateUniqueStudentDataInCloud(
+      editName.trim(),
+      editEmail.trim(),
+      finalPasswordToCheck,
+      editingStudent.id
+    );
+    if (!uniqueness.valid) {
+      setEditModalError(
+        uniqueness.error ||
+          'No se permiten datos repetidos (correo, nombre o contraseña ya registrados).'
+      );
+      return;
+    }
+
+    const previousEmail = editingStudent.email;
     const sortedPhases = Array.from(new Set(editCompletedPhases)).sort((a, b) => a - b);
     const progressPercent = Math.min(100, Math.round((sortedPhases.length / 6) * 100));
     const allSixDone = sortedPhases.length === 6;
@@ -241,6 +307,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       ...editingStudent,
       fullName: editName.trim(),
       email: editEmail.trim().toLowerCase(),
+      password: editPassword.trim() ? editPassword.trim() : editingStudent.password,
       completedPhases: sortedPhases,
       progressPercent,
       currentPhase: nextPhase,
@@ -254,9 +321,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
     const updatedList = students.map((s) => (s.id === editingStudent.id ? updatedRecord : s));
     setStudents(updatedList);
-    saveStoredStudents(updatedList);
+    setEditingStudent(null);
 
-    // Also synchronize individual student progress storage in case they log in
+    await updateStudentInCloud(editingStudent.id, updatedRecord, previousEmail);
+
+    // Also synchronize individual student progress in Supabase & cache
     const existingIndividual = getStoredProgress(updatedRecord.email);
     saveStoredProgress(updatedRecord.email, {
       ...existingIndividual,
@@ -270,16 +339,16 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       certificateDate: certDate,
       certificateId: certId,
     });
-
-    setEditingStudent(null);
   };
 
-  const handleDeleteStudent = (studentId: string) => {
+  const handleDeleteStudent = async (studentId: string) => {
+    const target = students.find((s) => s.id === studentId);
     const updatedList = students.filter((s) => s.id !== studentId);
     setStudents(updatedList);
-    saveStoredStudents(updatedList);
     setEditingStudent(null);
     setConfirmDeleteId(null);
+
+    await deleteStudentFromCloud(studentId, target?.email);
   };
 
   return (
@@ -668,6 +737,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               </button>
             </div>
 
+            {addModalError && (
+              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                <span className="font-bold">Error: </span>
+                <span>{addModalError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleCreateStudent} className="space-y-3 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">
@@ -683,90 +759,127 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Correo Electrónico *
-                </label>
-                <input
-                  type="email"
-                  value={newStudentEmail}
-                  onChange={(e) => setNewStudentEmail(e.target.value)}
-                  placeholder="p.ramirez@minpesca.gob.ve"
-                  className="w-full px-3 py-2.5 text-base sm:text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[44px]"
-                  required
-                />
-              </div>
-
-              <div className="pt-2 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-3.5 py-2 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200 transition-colors cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#107C41] hover:bg-[#185C37] text-white rounded-lg font-bold transition-colors cursor-pointer"
-                >
-                  Guardar Inscripción
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal to Manage / Grade an Existing Student */}
-      {editingStudent && (
-        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 sm:p-6 border border-slate-200 space-y-4 my-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <SlidersHorizontal className="w-4 h-4 text-[#107C41]" />
-                  <span>Gestión Académica del Estudiante</span>
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Actualiza datos personales, fases aprobadas o calificaciones para certificar
-                </p>
-              </div>
-              <button
-                onClick={() => setEditingStudent(null)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-sm cursor-pointer p-1"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveStudentChanges} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
-                    Nombre y Apellido *
-                  </label>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full px-3 py-2 text-base sm:text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[42px]"
-                    required
-                  />
-                </div>
-
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">
                     Correo Electrónico *
                   </label>
                   <input
                     type="email"
-                    value={editEmail}
-                    onChange={(e) => setEditEmail(e.target.value)}
-                    className="w-full px-3 py-2 text-base sm:text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[42px]"
+                    value={newStudentEmail}
+                    onChange={(e) => setNewStudentEmail(e.target.value)}
+                    placeholder="p.ramirez@minpesca.gob.ve"
+                    className="w-full px-3 py-2.5 text-base sm:text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[44px]"
                     required
                   />
                 </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">
+                    Contraseña de Acceso (para Iniciar Sesión) *
+                  </label>
+                  <input
+                    type="text"
+                    value={newStudentPassword}
+                    onChange={(e) => setNewStudentPassword(e.target.value)}
+                    placeholder="Ej. Pesca2026*"
+                    className="w-full px-3 py-2.5 text-base sm:text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[44px]"
+                    required
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddModalError(null);
+                      setShowAddModal(false);
+                    }}
+                    className="px-3.5 py-2 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200 transition-colors cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-[#107C41] hover:bg-[#185C37] text-white rounded-lg font-bold transition-colors cursor-pointer"
+                  >
+                    Guardar Inscripción
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal to Manage / Grade an Existing Student */}
+        {editingStudent && (
+          <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 sm:p-6 border border-slate-200 space-y-4 my-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <SlidersHorizontal className="w-4 h-4 text-[#107C41]" />
+                    <span>Gestión Académica del Estudiante</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Actualiza datos personales, contraseña de acceso, fases aprobadas o calificaciones
+                  </p>
+                </div>
+                <button
+                  onClick={() => setEditingStudent(null)}
+                  className="text-slate-400 hover:text-slate-600 font-bold text-sm cursor-pointer p-1"
+                >
+                  ✕
+                </button>
               </div>
+
+              {editModalError && (
+                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+                  <span className="font-bold">Error: </span>
+                  <span>{editModalError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveStudentChanges} className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Nombre y Apellido *
+                    </label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="w-full px-3 py-2 text-base sm:text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[42px]"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Correo Electrónico *
+                    </label>
+                    <input
+                      type="email"
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      className="w-full px-3 py-2 text-base sm:text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[42px]"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      Contraseña de Acceso
+                    </label>
+                    <input
+                      type="text"
+                      value={editPassword}
+                      onChange={(e) => setEditPassword(e.target.value)}
+                      placeholder="Asignar o cambiar clave"
+                      className="w-full px-3 py-2 text-base sm:text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#107C41] min-h-[42px]"
+                    />
+                  </div>
+                </div>
 
               {/* Phase Completion Selector */}
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">

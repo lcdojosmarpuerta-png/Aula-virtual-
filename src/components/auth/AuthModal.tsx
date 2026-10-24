@@ -10,34 +10,43 @@ import {
   ShieldCheck,
   Award,
   GraduationCap,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
-import { registerStudentInList } from '../../utils/storage';
+import {
+  verifyStudentLoginInCloud,
+  registerStudentWithPasswordInCloud,
+  verifyTeacherAuthentication,
+} from '../../utils/storage';
 
 interface AuthModalProps {
   onSuccess: (user: User) => void;
 }
 
-type AuthMode = 'register' | 'login' | 'teacher';
+type AuthMode = 'login' | 'register' | 'teacher';
 
 const LOGIN_BG_IMAGE = '/assets/aistudio/0809ebc898c926b96763e29a80fa6789_32c370f1.jpg';
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
-  const [mode, setMode] = useState<AuthMode>('register');
+  const [mode, setMode] = useState<AuthMode>('login');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleModeSwitch = (nextMode: AuthMode) => {
     setMode(nextMode);
     setError(null);
     setPassword('');
+    setShowPassword(false);
     if (nextMode === 'teacher') {
       setEmail('');
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -51,38 +60,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
       return;
     }
 
-    if (mode === 'teacher') {
-      if (password !== 'Zeus23**') {
-        setError('Contraseña docente incorrecta. Ingrese manualmente la clave autorizada.');
+    setIsSubmitting(true);
+    try {
+      if (mode === 'teacher') {
+        const teacherRes = await verifyTeacherAuthentication(email, password);
+        if (!teacherRes.success || !teacherRes.user) {
+          setError(
+            teacherRes.error ||
+              'Credenciales docentes incorrectas. Ingrese manualmente su usuario y clave autorizada.'
+          );
+          return;
+        }
+        onSuccess(teacherRes.user);
         return;
       }
 
-      const teacherUser: User = {
-        fullName: 'Lcdo. Josmar Puerta',
-        email: email.trim().toLowerCase(),
-        registeredAt: new Date().toISOString(),
-        hasCompletedOnboarding: true,
-        role: 'teacher',
-      };
-      onSuccess(teacherUser);
-      return;
+      if (mode === 'login') {
+        const loginRes = await verifyStudentLoginInCloud(email, password);
+        if (!loginRes.success || !loginRes.user) {
+          setError(
+            loginRes.error ||
+              'Usuario o contraseña incorrectos. Verifica tus datos registrados en la base de datos.'
+          );
+          return;
+        }
+        onSuccess(loginRes.user);
+        return;
+      }
+
+      // mode === 'register'
+      const registerRes = await registerStudentWithPasswordInCloud(fullName, email, password);
+      if (!registerRes.success || !registerRes.user) {
+        setError(
+          registerRes.error || 'No se pudo registrar la cuenta en la base de datos.'
+        );
+        return;
+      }
+      onSuccess(registerRes.user);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const effectiveName =
-      mode === 'register'
-        ? fullName.trim()
-        : fullName.trim() || email.split('@')[0].replace(/[._-]/g, ' ');
-
-    const newUser: User = {
-      fullName: effectiveName,
-      email: email.trim().toLowerCase(),
-      registeredAt: new Date().toISOString(),
-      hasCompletedOnboarding: false,
-      role: 'student',
-    };
-
-    registerStudentInList(newUser);
-    onSuccess(newUser);
   };
 
   return (
@@ -173,19 +190,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
         {/* Right Side: Form (Touch-optimized) */}
         <div className="lg:col-span-7 p-4 sm:p-8 lg:p-10 flex flex-col justify-center bg-white/95">
           <div className="max-w-md w-full mx-auto">
-            {/* 3 Tabs: Crear Cuenta | Iniciar Sesión | Acceso Docente */}
+            {/* 3 Tabs: Iniciar Sesión | Crear Cuenta | Docente */}
             <div className="grid grid-cols-3 border-b border-slate-200 mb-5 text-center text-xs">
-              <button
-                type="button"
-                onClick={() => handleModeSwitch('register')}
-                className={`pb-2.5 sm:pb-3 font-semibold border-b-2 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center ${
-                  mode === 'register'
-                    ? 'border-[#107C41] text-[#107C41]'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Crear Cuenta
-              </button>
               <button
                 type="button"
                 onClick={() => handleModeSwitch('login')}
@@ -196,6 +202,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
                 }`}
               >
                 Iniciar Sesión
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeSwitch('register')}
+                className={`pb-2.5 sm:pb-3 font-semibold border-b-2 transition-colors cursor-pointer min-h-[44px] flex items-center justify-center ${
+                  mode === 'register'
+                    ? 'border-[#107C41] text-[#107C41]'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                Crear Cuenta
               </button>
               <button
                 type="button"
@@ -213,24 +230,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
             <div className="mb-4 sm:mb-6">
               <h2 className="text-lg sm:text-xl font-bold text-slate-900">
-                {mode === 'register'
+                {mode === 'login'
+                  ? 'Ingreso de Estudiante'
+                  : mode === 'register'
                   ? 'Registro de Estudiante'
-                  : mode === 'login'
-                  ? 'Bienvenido de nuevo, Estudiante'
                   : 'Ingreso al Panel Docente'}
               </h2>
               <p className="text-xs text-slate-500 mt-1">
-                {mode === 'register'
-                  ? 'Ingresa tus datos para registrar tu progreso y emitir tu certificado.'
-                  : mode === 'login'
-                  ? 'Ingresa con tu correo registrado para continuar tu capacitación.'
-                  : 'Ingrese manualmente su correo institucional y contraseña docente.'}
+                {mode === 'login'
+                  ? 'Ingresa con tu usuario/correo y contraseña registrados en la base de datos.'
+                  : mode === 'register'
+                  ? 'Crea tu usuario y contraseña en la base de datos para iniciar el curso.'
+                  : 'Ingrese manualmente su usuario/correo institucional y contraseña docente predeterminada.'}
               </p>
             </div>
 
             {error && (
-              <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-                <span className="font-bold">Error:</span> {error}
+              <div className="mb-4 p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
+                <span className="font-bold shrink-0">Error:</span>
+                <span>{error}</span>
               </div>
             )}
 
@@ -259,17 +277,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  {mode === 'teacher' ? 'Correo Institucional Docente' : 'Correo Electrónico'}{' '}
+                  {mode === 'teacher'
+                    ? 'Usuario o Correo Docente'
+                    : mode === 'login'
+                    ? 'Usuario o Correo Electrónico'
+                    : 'Correo Electrónico'}{' '}
                   <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="email"
+                    type={mode === 'register' ? 'email' : 'text'}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     autoComplete="off"
-                    placeholder={mode === 'teacher' ? 'Ingrese correo docente' : 'estudiante@correo.com'}
+                    placeholder={
+                      mode === 'teacher'
+                        ? 'Ingrese usuario o correo docente'
+                        : mode === 'login'
+                        ? 'Correo o nombre registrado'
+                        : 'estudiante@correo.com'
+                    }
                     className="w-full pl-9 pr-3 py-2.5 sm:py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#107C41] focus:border-transparent transition-all min-h-[44px]"
                     required
                   />
@@ -278,33 +306,59 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  {mode === 'teacher' ? 'Contraseña Docente' : 'Contraseña'}{' '}
+                  {mode === 'teacher'
+                    ? 'Contraseña Docente Predeterminada'
+                    : mode === 'register'
+                    ? 'Crear Contraseña de Acceso'
+                    : 'Contraseña'}{' '}
                   <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="new-password"
-                    placeholder="Ingrese su contraseña manualmente"
-                    className="w-full pl-9 pr-3 py-2.5 sm:py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#107C41] focus:border-transparent transition-all min-h-[44px]"
+                    placeholder={
+                      mode === 'teacher'
+                        ? 'Ingrese manualmente la contraseña docente'
+                        : mode === 'register'
+                        ? 'Crea tu contraseña (mín. 4 caracteres)'
+                        : 'Ingresa tu contraseña registrada'
+                    }
+                    className="w-full pl-9 pr-10 py-2.5 sm:py-2.5 text-base sm:text-sm bg-slate-50 border border-slate-300 rounded-lg focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#107C41] focus:border-transparent transition-all min-h-[44px]"
                     required
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    tabIndex={-1}
+                    title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  >
+                    {showPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3.5 sm:py-3 px-4 bg-[#107C41] hover:bg-[#185C37] text-white font-semibold text-sm rounded-xl shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer min-h-[48px]"
+                disabled={isSubmitting}
+                className="w-full py-3.5 sm:py-3 px-4 bg-[#107C41] hover:bg-[#185C37] disabled:opacity-60 text-white font-semibold text-sm rounded-xl shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 mt-2 cursor-pointer min-h-[48px]"
               >
                 <span>
-                  {mode === 'register'
-                    ? 'Crear Cuenta y Comenzar'
+                  {isSubmitting
+                    ? 'Verificando en Base de Datos...'
+                    : mode === 'register'
+                    ? 'Crear Cuenta y Guardar en BD'
                     : mode === 'login'
-                    ? 'Acceder al Aula Virtual'
-                    : 'Ingresar al Dashboard Docente'}
+                    ? 'Verificar e Iniciar Sesión'
+                    : 'Verificar Acceso Docente'}
                 </span>
                 <ArrowRight className="w-4 h-4" />
               </button>

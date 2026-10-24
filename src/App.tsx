@@ -11,6 +11,9 @@ import {
   getStoredProgress,
   saveStoredProgress,
   resetStoredProgress,
+  fetchProgressFromCloud,
+  markOnboardingCompletedInCloud,
+  testAndSyncSupabaseConnection,
   INITIAL_PROGRESS,
 } from './utils/storage';
 
@@ -18,6 +21,7 @@ import {
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { BottomBanner } from './components/layout/BottomBanner';
+import { SupabaseDiagnosticBanner } from './components/layout/SupabaseDiagnosticBanner';
 import { AuthModal } from './components/auth/AuthModal';
 import { OnboardingVideo } from './components/onboarding/OnboardingVideo';
 
@@ -62,7 +66,7 @@ export default function App() {
     }
   };
 
-  // Initialize from localStorage on mount
+  // Initialize from localStorage and sync with Supabase cloud on mount
   useEffect(() => {
     const storedUser = getStoredUser();
     if (storedUser) {
@@ -74,6 +78,12 @@ export default function App() {
       }
       const userProgress = getStoredProgress(storedUser.email);
       setProgress(userProgress);
+
+      void fetchProgressFromCloud(storedUser.email).then((cloudProgress) => {
+        setProgress(cloudProgress);
+      });
+    } else {
+      void testAndSyncSupabaseConnection();
     }
     setIsInitialized(true);
   }, []);
@@ -105,6 +115,9 @@ export default function App() {
     }
     const existingProgress = getStoredProgress(authenticatedUser.email);
     setProgress(existingProgress);
+    void fetchProgressFromCloud(authenticatedUser.email).then((cloudProgress) => {
+      setProgress(cloudProgress);
+    });
     scrollToTop();
   };
 
@@ -128,6 +141,7 @@ export default function App() {
     };
     setUser(updatedUser);
     saveStoredUser(updatedUser);
+    void markOnboardingCompletedInCloud(updatedUser.email);
     scrollToTop();
   };
 
@@ -273,6 +287,7 @@ export default function App() {
   if (!user) {
     return (
       <div className="min-h-screen flex flex-col justify-between">
+        <SupabaseDiagnosticBanner />
         <AuthModal onSuccess={handleAuthSuccess} />
         <BottomBanner />
       </div>
@@ -283,6 +298,7 @@ export default function App() {
   if (!user.hasCompletedOnboarding && user.role !== 'teacher') {
     return (
       <div className="min-h-screen flex flex-col justify-between">
+        <SupabaseDiagnosticBanner />
         <OnboardingVideo
           user={user}
           onFinishOnboarding={handleFinishOnboarding}
@@ -296,6 +312,7 @@ export default function App() {
   if (user.role === 'teacher' && isTeacherMode) {
     return (
       <div className="relative min-h-screen flex flex-col font-sans text-slate-800 pb-16">
+        <SupabaseDiagnosticBanner />
         {/* Attached Image Fixed Background for Módulo de Estudiantes */}
         <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden no-print">
           <img
@@ -354,6 +371,7 @@ export default function App() {
   // 4. Main Student LMS Dashboard - Uses Second Image as System Background
   return (
     <div className="relative min-h-screen flex flex-col font-sans text-slate-800 pb-16">
+      <SupabaseDiagnosticBanner />
       {/* Second Image Fixed Background for System Pages */}
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden no-print">
         <img
