@@ -24,6 +24,13 @@ export const supabaseAnonKey: string =
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+  global: {
+    headers: {
+      'X-Client-Info': 'minpesca-excel-lms',
+    },
   },
 });
 

@@ -13,7 +13,6 @@ import {
   resetStoredProgress,
   fetchProgressFromCloud,
   markOnboardingCompletedInCloud,
-  testAndSyncSupabaseConnection,
   INITIAL_PROGRESS,
 } from './utils/storage';
 
@@ -66,7 +65,7 @@ export default function App() {
     }
   };
 
-  // Initialize from localStorage and sync with Supabase cloud on mount
+  // Initialize from localStorage and sync with Supabase cloud on mount (only for logged-in students)
   useEffect(() => {
     const storedUser = getStoredUser();
     if (storedUser) {
@@ -75,15 +74,13 @@ export default function App() {
         setIsTeacherMode(true);
       } else {
         setIsTeacherMode(false);
-      }
-      const userProgress = getStoredProgress(storedUser.email);
-      setProgress(userProgress);
+        const userProgress = getStoredProgress(storedUser.email);
+        setProgress(userProgress);
 
-      void fetchProgressFromCloud(storedUser.email).then((cloudProgress) => {
-        setProgress(cloudProgress);
-      });
-    } else {
-      void testAndSyncSupabaseConnection();
+        void fetchProgressFromCloud(storedUser.email).then((cloudProgress) => {
+          setProgress(cloudProgress);
+        });
+      }
     }
     setIsInitialized(true);
   }, []);
@@ -112,12 +109,12 @@ export default function App() {
       setIsTeacherMode(true);
     } else {
       setIsTeacherMode(false);
+      const existingProgress = getStoredProgress(authenticatedUser.email);
+      setProgress(existingProgress);
+      void fetchProgressFromCloud(authenticatedUser.email).then((cloudProgress) => {
+        setProgress(cloudProgress);
+      });
     }
-    const existingProgress = getStoredProgress(authenticatedUser.email);
-    setProgress(existingProgress);
-    void fetchProgressFromCloud(authenticatedUser.email).then((cloudProgress) => {
-      setProgress(cloudProgress);
-    });
     scrollToTop();
   };
 

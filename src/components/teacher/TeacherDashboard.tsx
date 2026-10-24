@@ -325,20 +325,24 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
     await updateStudentInCloud(editingStudent.id, updatedRecord, previousEmail);
 
-    // Also synchronize individual student progress in Supabase & cache
+    // Also synchronize individual student progress in Supabase & cache (without re-upserting students table)
     const existingIndividual = getStoredProgress(updatedRecord.email);
-    saveStoredProgress(updatedRecord.email, {
-      ...existingIndividual,
-      completedPhases: sortedPhases,
-      currentPhase: nextPhase,
-      quizScore: quizVal,
-      quizSubmitted: quizVal !== null,
-      practicalScore: pracVal,
-      finalScore: finalVal,
-      isApproved: isCulminated ? true : finalVal !== null ? false : null,
-      certificateDate: certDate,
-      certificateId: certId,
-    });
+    saveStoredProgress(
+      updatedRecord.email,
+      {
+        ...existingIndividual,
+        completedPhases: sortedPhases,
+        currentPhase: nextPhase,
+        quizScore: quizVal,
+        quizSubmitted: quizVal !== null,
+        practicalScore: pracVal,
+        finalScore: finalVal,
+        isApproved: isCulminated ? true : finalVal !== null ? false : null,
+        certificateDate: certDate,
+        certificateId: certId,
+      },
+      true
+    );
   };
 
   const handleDeleteStudent = async (studentId: string) => {
